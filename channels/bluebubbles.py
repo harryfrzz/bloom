@@ -290,6 +290,13 @@ class BlueBubblesAdapter:
         data = self._with_transcript(data)
         message = self.parse_webhook({**payload, "data": data})
         if message is None:
+            # It got past the inbound checks, so something a person sent is
+            # being dropped. Never let that happen quietly again.
+            logger.warning(
+                "Dropped an inbound message with nothing readable (guid=%s, attachments=%d)",
+                data.get("guid"),
+                len(data.get("attachments") or []),
+            )
             return
         # The server's listener stalls and then floods the backlog through, so a
         # message can surface long after it was sent.  Answering one then reads
@@ -354,7 +361,11 @@ class BlueBubblesAdapter:
 
     def _recent_messages(self, after_ms: int) -> list[dict[str, Any]]:
         query = urlencode({"guid": self.password})
-        body = json.dumps({"limit": 50, "sort": "DESC", "after": max(after_ms, 0), "with": ["handle", "chats"]}).encode()
+        # Attachments included, or a polled voice note arrives with no audio to
+        # find and is dropped for having nothing to say.
+        body = json.dumps(
+            {"limit": 50, "sort": "DESC", "after": max(after_ms, 0), "with": ["handle", "chats", "attachment"]}
+        ).encode()
         request = Request(
             f"{self.base_url}/api/v1/message/query?{query}",
             data=body,

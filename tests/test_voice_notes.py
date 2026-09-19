@@ -74,6 +74,35 @@ class VoiceNoteTests(unittest.TestCase):
 
         self.assertIn("could not be transcribed", heard[0])
 
+    def test_polling_asks_for_attachments_so_voice_notes_are_not_lost(self):
+        import json
+
+        asked = {}
+
+        class Response:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exception):
+                return False
+
+            def read(self):
+                return b'{"data": []}'
+
+        def opener(request, timeout=None):
+            asked.update(json.loads(request.data))
+            return Response()
+
+        BlueBubblesAdapter(
+            base_url="https://server.example", password="not-a-real-password", opener=opener
+        )._recent_messages(0)
+
+        # Without this the poller sees a voice note as an empty message and
+        # drops it, which is how one went unanswered with nothing logged.
+        self.assertIn("attachment", asked["with"])
+
     def test_speech_is_asked_for_in_roman_script(self):
         from voice.sarvam import SarvamVoice
 
