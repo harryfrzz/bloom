@@ -74,6 +74,29 @@ class VoiceNoteTests(unittest.TestCase):
 
         self.assertIn("could not be transcribed", heard[0])
 
+    def test_speech_is_asked_for_in_roman_script(self):
+        from voice.sarvam import SarvamVoice
+
+        sent = {}
+
+        class Session:
+            def post(self, url, **kwargs):
+                sent.update(kwargs.get("data") or {})
+                return type("R", (), {"status_code": 200, "json": lambda _self: {"transcript": "Enikku meeting und", "language_code": "ml-IN"}})()
+
+        heard = SarvamVoice("key", session=Session()).transcribe(b"audio")
+
+        self.assertEqual(sent["mode"], "translit")
+        self.assertEqual(heard.text, "Enikku meeting und")
+
+    def test_only_the_three_languages_count_as_supported(self):
+        from voice.sarvam import SarvamVoice
+
+        for language in ("en-IN", "hi-IN", "ml-IN"):
+            self.assertTrue(SarvamVoice.supports(language))
+        for language in ("ta-IN", "bn-IN", "kn-IN", None, ""):
+            self.assertFalse(SarvamVoice.supports(language))
+
     def test_speaking_sends_audio_into_the_conversation(self):
         spoken = []
 

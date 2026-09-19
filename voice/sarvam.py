@@ -35,6 +35,15 @@ class AudioReply:
 class SarvamVoice:
     """Thin Sarvam boundary: audio/text transport, no agent policy inside it."""
 
+    # The three bloom answers in. Anything else is recognised so it can be
+    # turned down politely, rather than answered badly.
+    LANGUAGES = ("en-IN", "hi-IN", "ml-IN")
+
+    # "translit" returns Malayalam and Hindi speech in Roman script while
+    # leaving the English words people mix in alone, which is how they write
+    # and therefore how bloom should read them back.
+    MODE = "translit"
+
     def __init__(self, api_key: str, *, session: requests.Session | Any | None = None) -> None:
         if not api_key:
             raise VoiceError("SARVAM_API_KEY is required for voice features.")
@@ -45,6 +54,10 @@ class SarvamVoice:
     def from_environment(cls) -> "SarvamVoice":
         return cls(os.getenv("SARVAM_API_KEY", ""))
 
+    @classmethod
+    def supports(cls, language: str | None) -> bool:
+        return bool(language) and str(language) in cls.LANGUAGES
+
     def transcribe(self, audio: bytes, *, filename: str = "voice.ogg", language: str = "unknown") -> Transcript:
         if not audio:
             raise VoiceError("Cannot transcribe an empty audio message.")
@@ -52,7 +65,11 @@ class SarvamVoice:
             STT_URL,
             headers={"api-subscription-key": self.api_key},
             files={"file": (filename, io.BytesIO(audio), "audio/ogg")},
-            data={"model": "saaras:v3", "language_code": language, "mode": "codemix"},
+            data={
+                "model": "saaras:v3",
+                "language_code": language,
+                "mode": os.getenv("SARVAM_MODE") or self.MODE,
+            },
             timeout=120,
         )
         payload = self._payload(response, "transcription")
@@ -70,6 +87,10 @@ class SarvamVoice:
         """Create a Bulbul v3 audio reply; caller owns when speech is useful."""
         if not text.strip():
             raise VoiceError("Cannot synthesize empty text.")
+        if not self.supports(language):
+            # Speaking the words of one language in another's voice is worse
+            # than simply reading them out in English.
+            language = "en-IN"
         response = self.session.post(
             TTS_URL,
             headers={"api-subscription-key": self.api_key, "Content-Type": "application/json"},

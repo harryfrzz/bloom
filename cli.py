@@ -56,9 +56,22 @@ def serve_imessage() -> int:
     voice = _voice()
     adapter = _bluebubbles_adapter()
     if voice is not None:
-        # A voice note is just a message that arrived as sound; turn it into
-        # words at the edge so nothing downstream has to care.
-        adapter.transcribe = lambda audio, filename: voice.transcribe(audio, filename=filename).text
+
+        def hear(audio: bytes, filename: str) -> str | None:
+            """A voice note is a message that arrived as sound; make it words.
+
+            Transcribed in Roman script, so Manglish and Hinglish speech reads
+            back the way the same person would have typed it.
+            """
+            heard = voice.transcribe(audio, filename=filename)
+            if heard.text and not voice.supports(heard.language):
+                return (
+                    f"[a voice note in {heard.language or 'a language bloom does not handle'}: "
+                    f"tell them you only manage English, Hindi and Malayalam]"
+                )
+            return heard.text
+
+        adapter.transcribe = hear
     # Written per request rather than a fixed phrase, so the wait says what is
     # being looked up and does it in the language they are speaking.
     adapter.ack_writer = lambda incoming: agent.acknowledge(incoming.text)

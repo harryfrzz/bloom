@@ -128,7 +128,7 @@ class BloomApp:
             description=(
                 "Send this reply as a voice note instead of writing it out. Use it when the user sent "
                 "a voice note themselves, or asked to be spoken to, and not otherwise. Give the text to "
-                "say and a language code such as en-IN, hi-IN or ml-IN. Keep it to a few sentences: "
+                "say and one of the language codes en-IN, hi-IN or ml-IN. Keep it to a few sentences: "
                 "nobody wants to listen to a list."
             ),
             parameters={
