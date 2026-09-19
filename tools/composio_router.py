@@ -51,6 +51,10 @@ class ComposioRouter:
             result_limit=int(os.getenv("COMPOSIO_RESULT_LIMIT", str(cls.RESULT_LIMIT))),
         )
 
+    def session_for(self, user_id: str) -> Any:
+        """The router session for this person, for work outside a conversation."""
+        return self._session(user_id)
+
     def _session(self, user_id: str) -> Any:
         """One router session per person, reused for the life of the process."""
         with self._lock:

@@ -50,6 +50,12 @@ form of a name. Malayalam and Hindi attach endings to nouns, so Lossfunkil,
 Lossfunkinte and Lossfunkine all mean Lossfunk, and searching for the inflected
 form finds nothing. If a search comes back empty, try the shorter root before
 telling anyone there is nothing there.
+When someone asks to be told when something happens — mail from a person, a
+reply they are waiting on, an invite — set it up with watch_for there and then.
+You will not be thinking about it later: an intention you did not record is a
+promise already broken, so never say you will let them know unless a watch
+exists. Find the tool that would answer the question right now, and watch with
+that same tool and arguments.
 Use tools only when they materially improve the answer. Never claim a tool has
 run when it has not. The tools you are given are live connections to the user's
 own accounts: if one exists for what they are asking about, use it instead of
@@ -128,6 +134,26 @@ used. Eight words is plenty and fewer is better — "checking your mail now",
 "onnu nokkatte", "ek sec, dekh raha hoon" are the register, not phrases to
 copy. No markdown, nothing formal or wordy. Do not answer the request, do not
 guess what you will find, and do not ask them anything."""
+
+    watch_report = """Something a person asked bloom to keep an eye out for has
+just turned up. Tell them what arrived and why it matters to them, in one or two
+short lines, the way you would text it. Lead with the thing itself, never with
+"your watch fired". Use the same language and script they used when they asked.
+Plain text, no markdown. If several things arrived, lead with the most important
+and count the rest."""
+
+    def report_watch(self, what: str, found: str) -> str | None:
+        """Write up what a watch found, or None to let the caller fall back."""
+        try:
+            result = self.provider.complete(
+                system=self.watch_report,
+                messages=[Message("user", f"They asked to be told about: {what}\n\nWhat came back:\n{found}")],
+            )
+        except Exception as exc:
+            logger.warning("Could not write up a watch: %s", exc)
+            return None
+        line = (result.text or "").strip()
+        return line or None
 
     def acknowledge(self, user_text: str) -> str | None:
         """A line to send while the real answer is still being worked out.

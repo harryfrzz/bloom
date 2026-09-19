@@ -7,6 +7,7 @@ import os
 import threading
 from pathlib import Path
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from agent.converse import ConversationAgent
 from agent.types import Message, Tool
@@ -14,8 +15,10 @@ from channels.base import InboundMessage
 from memory.threads import ThreadStore
 from memory.approvals import ApprovalStore
 from memory.identities import IdentityStore
+from memory.watches import WatchStore
 from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
+from tasks.watcher import Watcher
 from tools.location import NetworkLocation
 
 
@@ -48,6 +51,8 @@ class BloomApp:
         tool_factory: ToolFactory | None = None,
         browser_tasks: bool = False,
         location: NetworkLocation | None = None,
+        session_for: Callable[[str], Any] | None = None,
+        notify: Callable[[str, str], bool] | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -70,6 +75,21 @@ class BloomApp:
         if browser_tasks:
             self._offer_browser_tasks()
         self.agent.tools["current_location"] = (location or NetworkLocation.from_environment()).tool()
+        self.watches = WatchStore(self.db_path)
+        self.watcher: Watcher | None = None
+        # Watching needs somewhere to read from and someone to tell; without
+        # either, offering to watch would be a promise bloom could not keep.
+        if session_for is not None and notify is not None:
+            self.watcher = Watcher(
+                store=self.watches,
+                session_for=session_for,
+                allow=self.interrupts.allow,
+                deliver=notify,
+                describe=self.agent.report_watch,
+            )
+            for tool in self.watcher.tools(self._current_user):
+                self.agent.tools[tool.name] = tool
+            self.watcher.start()
         self.agent.request_approval = self._request_approval
 
     def _offer_browser_tasks(self) -> None:
@@ -83,6 +103,10 @@ class BloomApp:
             parameters={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
             handler=self._start_task_from_cli,
         )
+
+    def _current_user(self) -> str:
+        incoming = self._active_inbound.get()
+        return incoming.user_id if incoming else "cli"
 
     def _request_approval(self, tool_name: str, arguments: dict) -> str:
         incoming = self._active_inbound.get()

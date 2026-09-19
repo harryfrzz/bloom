@@ -64,12 +64,24 @@ def serve_imessage() -> int:
         adapter.send(thread_id=thread_id, text=prefix + task_result.text)
 
     connector = _composio_connector()
+    identities = IdentityStore(db_path)
+
+    def notify(user_id: str, text: str) -> bool:
+        """Say something nobody asked for right now, in their own thread."""
+        identity = identities.get(user_id)
+        if identity is None or identity.channel != "imessage":
+            return False
+        adapter.send(thread_id=identity.thread_id, text=text)
+        return True
+
     app = BloomApp(
         agent,
         db_path=db_path,
         task_report=report,
         tool_factory=connector.for_user if connector else None,
         browser_tasks=os.getenv("BLOOM_BROWSER_TASKS", "").strip().lower() in {"1", "true", "yes", "on"},
+        session_for=getattr(connector, "session_for", None),
+        notify=notify,
     )
     print(f"Listening for BlueBubbles webhooks on http://{adapter.host}:{adapter.port}/bluebubbles/webhook")
     print(f"Also polling {adapter.base_url} every {adapter.poll_interval:g}s in case the server stops emitting events")
