@@ -19,6 +19,7 @@ from memory.watches import WatchStore
 from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
 from tasks.watcher import Watcher
+from tools.apple import AppleApps
 from tools.location import NetworkLocation
 
 
@@ -55,6 +56,7 @@ class BloomApp:
         notify: Callable[[str, str], bool] | None = None,
         speak: Callable[[str, str, str], None] | None = None,
         awaiting: Callable[..., list[dict]] | None = None,
+        apple: AppleApps | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -81,6 +83,8 @@ class BloomApp:
             self.agent.tools["speak"] = self._voice_tool(speak)
         if awaiting is not None:
             self.agent.tools["waiting_on_you"] = self._waiting_tool(awaiting)
+        for tool in (apple or AppleApps()).tools():
+            self.agent.tools[tool.name] = tool
         self.watches = WatchStore(self.db_path)
         self.watcher: Watcher | None = None
         # Watching needs somewhere to read from and someone to tell; without
