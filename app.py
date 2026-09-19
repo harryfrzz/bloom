@@ -15,6 +15,7 @@ from channels.base import InboundMessage
 from memory.threads import ThreadStore
 from memory.approvals import ApprovalStore
 from memory.identities import IdentityStore
+from memory.knowledge import Knowledge
 from memory.watches import WatchStore
 from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
@@ -57,6 +58,7 @@ class BloomApp:
         speak: Callable[[str, str, str], None] | None = None,
         awaiting: Callable[..., list[dict]] | None = None,
         apple: AppleApps | None = None,
+        knowledge: Knowledge | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -85,16 +87,23 @@ class BloomApp:
             self.agent.tools["waiting_on_you"] = self._waiting_tool(awaiting)
         for tool in (apple or AppleApps()).tools():
             self.agent.tools[tool.name] = tool
+        self.knowledge = knowledge
+        if knowledge is not None:
+            self.agent.tools["recall"] = knowledge.tool(self._current_user)
         self.watches = WatchStore(self.db_path)
         self.watcher: Watcher | None = None
         # Watching needs somewhere to read from and someone to tell; without
         # either, offering to watch would be a promise bloom could not keep.
         if session_for is not None and notify is not None:
+            def deliver(user_id: str, text: str) -> bool:
+                self._keep(user_id, text, kind="watch")
+                return notify(user_id, text)
+
             self.watcher = Watcher(
                 store=self.watches,
                 session_for=session_for,
                 allow=self.interrupts.allow,
-                deliver=notify,
+                deliver=deliver,
                 describe=self.agent.report_watch,
             )
             for tool in self.watcher.tools(self._current_user):
@@ -148,6 +157,16 @@ class BloomApp:
             },
             handler=handler,
         )
+
+    def _keep(self, user_id: str, text: str, kind: str = "conversation") -> None:
+        """Write something to memory without making anyone wait for it."""
+        if self.knowledge is None:
+            return
+        threading.Thread(
+            target=lambda: self.knowledge.remember(user_id=user_id, text=text, kind=kind),
+            name="bloom-remember",
+            daemon=True,
+        ).start()
 
     def _waiting_tool(self, awaiting: Callable[..., list[dict]]) -> Tool:
         def handler(arguments: dict) -> str:
@@ -308,6 +327,7 @@ class BloomApp:
             self._active_inbound.reset(token)
             self._task_started.reset(started)
         history.extend((Message("user", incoming.text), Message("assistant", answer)))
+        self._keep(incoming.user_id, f"They said: {incoming.text}\nbloom answered: {answer}")
         # Remembering the last several exchanges is what makes a conversation
         # feel continuous; remembering all of them eventually breaks it.
         del history[: -self.HISTORY_MESSAGES]

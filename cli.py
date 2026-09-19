@@ -12,6 +12,7 @@ from agent.types import Message
 from app import BloomApp
 from channels.bluebubbles import BlueBubblesAdapter
 from memory.identities import IdentityStore
+from memory.knowledge import Knowledge
 from proactive import DailyInterruptLimit, LocalEventListener
 from providers.base import load
 from tools.composio import ComposioConnector
@@ -112,6 +113,7 @@ def serve_imessage() -> int:
         notify=notify,
         speak=speak if voice is not None else None,
         awaiting=adapter.awaiting_reply,
+        knowledge=Knowledge.from_environment(),
     )
     print(f"Listening for BlueBubbles webhooks on http://{adapter.host}:{adapter.port}/bluebubbles/webhook")
     print(f"Also polling {adapter.base_url} every {adapter.poll_interval:g}s in case the server stops emitting events")

@@ -26,6 +26,9 @@ tasks = [
 connectors = [
   "composio>=0.7.0",
 ]
+recall = [
+  "pinecone>=5.0.0",
+]
 
 [project.scripts]
 bloom = "cli:main"
