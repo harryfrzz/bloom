@@ -14,7 +14,7 @@ from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from .base import InboundHandler, InboundMessage
@@ -43,6 +43,7 @@ class BlueBubblesAdapter:
         ack_after: float = 4.0,
         ack_text: str = "One sec…",
         ack_writer: Callable[[InboundMessage], str | None] | None = None,
+        transcribe: Callable[[bytes, str], str | None] | None = None,
         failure_text: str = "Something broke on my side, sorry. Try me again in a moment.",
         opener: Callable[..., Any] = urlopen,
     ) -> None:
@@ -56,6 +57,7 @@ class BlueBubblesAdapter:
         self.ack_after = ack_after
         self.ack_text = ack_text
         self.ack_writer = ack_writer
+        self.transcribe = transcribe
         self.failure_text = failure_text
         self._opener = opener
         self._method: str | None = None
@@ -151,6 +153,82 @@ class BlueBubblesAdapter:
             detail = exc.read().decode("utf-8", "replace")[:300]
             raise RuntimeError(f"BlueBubbles send failed with HTTP {exc.code}: {detail}") from exc
 
+    def download_attachment(self, guid: str) -> bytes:
+        query = urlencode({"guid": self.password})
+        request = Request(f"{self.base_url}/api/v1/attachment/{quote(guid)}/download?{query}", method="GET")
+        with self._open(request) as response:
+            return response.read()
+
+    def send_attachment(
+        self,
+        *,
+        thread_id: str,
+        filename: str,
+        data: bytes,
+        content_type: str = "audio/wav",
+        is_audio: bool = True,
+    ) -> None:
+        """Send a file to a chat, optionally as a voice message."""
+        boundary = f"----bloom{uuid.uuid4().hex}"
+        fields = {
+            "chatGuid": thread_id,
+            "name": filename,
+            "tempGuid": str(uuid.uuid4()),
+            "method": self._send_method(),
+            "isAudioMessage": "true" if is_audio else "false",
+        }
+        body = bytearray()
+        for key, value in fields.items():
+            body += f"--{boundary}\r\nContent-Disposition: form-data; name=\"{key}\"\r\n\r\n{value}\r\n".encode()
+        body += (
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"attachment\"; filename=\"{filename}\"\r\n"
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode()
+        body += data
+        body += f"\r\n--{boundary}--\r\n".encode()
+        query = urlencode({"guid": self.password})
+        request = Request(
+            f"{self.base_url}/api/v1/message/attachment?{query}",
+            data=bytes(body),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        try:
+            with self._open(request) as response:
+                if not 200 <= response.status < 300:
+                    raise RuntimeError(f"BlueBubbles attachment send failed with HTTP {response.status}")
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:300]
+            raise RuntimeError(f"BlueBubbles attachment send failed with HTTP {exc.code}: {detail}") from exc
+
+    # What a voice note looks like across iMessage's audio formats.
+    AUDIO_HINTS = ("audio", "caf", "m4a", "mpeg-4-audio", "amr", "wav", "opus", "ogg")
+
+    @classmethod
+    def _is_audio(cls, attachment: Any) -> bool:
+        if not isinstance(attachment, dict):
+            return False
+        marks = " ".join(str(attachment.get(key) or "") for key in ("mimeType", "uti", "transferName")).lower()
+        return any(hint in marks for hint in cls.AUDIO_HINTS)
+
+    def _with_transcript(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Turn a voice note into words before anything else reads the message."""
+        if self.transcribe is None or str(data.get("text") or "").strip():
+            return data
+        voice = next((item for item in (data.get("attachments") or []) if self._is_audio(item)), None)
+        if not isinstance(voice, dict) or not voice.get("guid"):
+            return data
+        try:
+            audio = self.download_attachment(str(voice["guid"]))
+            spoken = self.transcribe(audio, str(voice.get("transferName") or "voice.caf"))
+        except Exception as exc:
+            logger.warning("Could not transcribe a voice note: %s", exc)
+            return {**data, "text": "[a voice note arrived but could not be transcribed]"}
+        if not spoken:
+            return {**data, "text": "[a voice note arrived but nothing could be made out]"}
+        logger.warning("Transcribed a voice note into %d characters", len(spoken))
+        return {**data, "text": spoken}
+
     @staticmethod
     def _event_data(payload: dict[str, Any]) -> dict[str, Any] | None:
         data = payload.get("data", payload)
@@ -164,18 +242,21 @@ class BlueBubblesAdapter:
         return data if isinstance(data, dict) else None
 
     @staticmethod
+    def _is_inbound(payload: dict[str, Any], data: dict[str, Any]) -> bool:
+        """Something a person sent us, rather than a receipt or our own echo."""
+        event = payload.get("event") or payload.get("eventType") or payload.get("type")
+        if event and str(event).lower().replace("_", "-") not in {"new-message", "newmessage"}:
+            return False
+        if data.get("isFromMe") or data.get("fromMe"):
+            return False
+        return not data.get("associatedMessageGuid")  # a tapback is not something to answer
+
+    @staticmethod
     def parse_webhook(payload: dict[str, Any]) -> InboundMessage | None:
         """Parse only inbound text messages and ignore receipts/outbound echoes."""
-        event = payload.get("event") or payload.get("eventType") or payload.get("type")
         data = BlueBubblesAdapter._event_data(payload)
-        if data is None:
+        if data is None or not BlueBubblesAdapter._is_inbound(payload, data):
             return None
-        if event and str(event).lower().replace("_", "-") not in {"new-message", "newmessage"}:
-            return None
-        if data.get("isFromMe") or data.get("fromMe"):
-            return None
-        if data.get("associatedMessageGuid"):
-            return None  # a tapback, not something to answer
         text = data.get("text") or data.get("message") or ""
         chats = data.get("chats") or []
         chat = chats[0] if isinstance(chats, list) and chats and isinstance(chats[0], dict) else {}
@@ -203,9 +284,12 @@ class BlueBubblesAdapter:
         return True
 
     def _answer(self, handler: InboundHandler, payload: dict[str, Any]) -> None:
-        message = self.parse_webhook(payload)
-        data = self._event_data(payload) or {}
-        if message is None or not self._claim(data.get("guid")):
+        data = self._event_data(payload)
+        if data is None or not self._is_inbound(payload, data) or not self._claim(data.get("guid")):
+            return
+        data = self._with_transcript(data)
+        message = self.parse_webhook({**payload, "data": data})
+        if message is None:
             return
         # The server's listener stalls and then floods the backlog through, so a
         # message can surface long after it was sent.  Answering one then reads

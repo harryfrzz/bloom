@@ -53,6 +53,7 @@ class BloomApp:
         location: NetworkLocation | None = None,
         session_for: Callable[[str], Any] | None = None,
         notify: Callable[[str, str], bool] | None = None,
+        speak: Callable[[str, str, str], None] | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -75,6 +76,8 @@ class BloomApp:
         if browser_tasks:
             self._offer_browser_tasks()
         self.agent.tools["current_location"] = (location or NetworkLocation.from_environment()).tool()
+        if speak is not None:
+            self.agent.tools["speak"] = self._voice_tool(speak)
         self.watches = WatchStore(self.db_path)
         self.watcher: Watcher | None = None
         # Watching needs somewhere to read from and someone to tell; without
@@ -102,6 +105,41 @@ class BloomApp:
             ),
             parameters={"type": "object", "properties": {"task": {"type": "string"}}, "required": ["task"]},
             handler=self._start_task_from_cli,
+        )
+
+    def _voice_tool(self, speak: Callable[[str, str, str], None]) -> Tool:
+        def handler(arguments: dict) -> str:
+            incoming = self._active_inbound.get()
+            if incoming is None:
+                return "There is no conversation to speak into right now."
+            said = str(arguments.get("text", "")).strip()
+            if not said:
+                return "Nothing to say."
+            language = str(arguments.get("language") or "en-IN").strip()
+            try:
+                speak(incoming.thread_id, said, language)
+            except Exception as exc:
+                logger.warning("Could not send a voice reply: %s", exc)
+                return f"The voice reply could not be sent ({type(exc).__name__}). Answer in text instead."
+            return "Voice note sent. Keep any written reply very short or skip it."
+
+        return Tool(
+            name="speak",
+            description=(
+                "Send this reply as a voice note instead of writing it out. Use it when the user sent "
+                "a voice note themselves, or asked to be spoken to, and not otherwise. Give the text to "
+                "say and a language code such as en-IN, hi-IN or ml-IN. Keep it to a few sentences: "
+                "nobody wants to listen to a list."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "What to say aloud."},
+                    "language": {"type": "string", "description": "Language code, e.g. en-IN, hi-IN, ml-IN."},
+                },
+                "required": ["text"],
+            },
+            handler=handler,
         )
 
     def _current_user(self) -> str:

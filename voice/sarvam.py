@@ -63,7 +63,10 @@ class SarvamVoice:
             confidence=float(probability) if isinstance(probability, (int, float)) else None,
         )
 
-    def synthesize(self, text: str, *, language: str, speaker: str = "anushka") -> AudioReply:
+    # bulbul:v3 rejects the older voices, so the default has to be one it knows.
+    SPEAKER = "anand"
+
+    def synthesize(self, text: str, *, language: str, speaker: str | None = None) -> AudioReply:
         """Create a Bulbul v3 audio reply; caller owns when speech is useful."""
         if not text.strip():
             raise VoiceError("Cannot synthesize empty text.")
@@ -73,7 +76,7 @@ class SarvamVoice:
             json={
                 "inputs": [text],
                 "target_language_code": language,
-                "speaker": speaker,
+                "speaker": speaker or os.getenv("SARVAM_SPEAKER") or self.SPEAKER,
                 "model": "bulbul:v3",
                 "pace": 1.0,
                 "speech_sample_rate": 22050,

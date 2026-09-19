@@ -53,7 +53,12 @@ def chat() -> int:
 
 def serve_imessage() -> int:
     agent = ConversationAgent(load())
+    voice = _voice()
     adapter = _bluebubbles_adapter()
+    if voice is not None:
+        # A voice note is just a message that arrived as sound; turn it into
+        # words at the edge so nothing downstream has to care.
+        adapter.transcribe = lambda audio, filename: voice.transcribe(audio, filename=filename).text
     # Written per request rather than a fixed phrase, so the wait says what is
     # being looked up and does it in the language they are speaking.
     adapter.ack_writer = lambda incoming: agent.acknowledge(incoming.text)
@@ -74,6 +79,16 @@ def serve_imessage() -> int:
         adapter.send(thread_id=identity.thread_id, text=text)
         return True
 
+    def speak(thread_id: str, text: str, language: str) -> None:
+        reply = voice.synthesize(text, language=language)
+        adapter.send_attachment(
+            thread_id=thread_id,
+            filename="bloom.wav",
+            data=reply.audio,
+            content_type=reply.mime_type,
+            is_audio=True,
+        )
+
     app = BloomApp(
         agent,
         db_path=db_path,
@@ -82,6 +97,7 @@ def serve_imessage() -> int:
         browser_tasks=os.getenv("BLOOM_BROWSER_TASKS", "").strip().lower() in {"1", "true", "yes", "on"},
         session_for=getattr(connector, "session_for", None),
         notify=notify,
+        speak=speak if voice is not None else None,
     )
     print(f"Listening for BlueBubbles webhooks on http://{adapter.host}:{adapter.port}/bluebubbles/webhook")
     print(f"Also polling {adapter.base_url} every {adapter.poll_interval:g}s in case the server stops emitting events")
@@ -111,6 +127,19 @@ def serve_events() -> int:
     print(f"Listening for local proactive events on http://{listener.host}:{listener.port}/events")
     listener.run()
     return 0
+
+
+def _voice():
+    """Sarvam handles speech, when a key for it is configured."""
+    if not os.getenv("SARVAM_API_KEY"):
+        return None
+    try:
+        from voice.sarvam import SarvamVoice
+
+        return SarvamVoice.from_environment()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Voice features are unavailable: %s", exc)
+        return None
 
 
 def _composio_connector():
