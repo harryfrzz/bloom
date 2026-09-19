@@ -241,6 +241,31 @@ information came from. Use the language they have been writing in."""
             return None
         return (result.text or "").strip() or None
 
+    promises = """Below are messages a person sent to other people. Find the
+ones where they committed to doing something — sending a thing, calling someone
+back, applying, paying, showing up. Take only real commitments they made
+themselves: not questions, not small talk, not things someone else promised
+them, and not vague intentions like "we should catch up sometime".
+Reply with a JSON array and nothing else. Each item: {"guid": the id of the
+message it came from, "what": the commitment in plain words, "owed_to": who to,
+"due": an ISO time if one can be worked out from what they wrote, else null}.
+An empty array is the right answer when nobody promised anything."""
+
+    def find_promises(self, written: str) -> list[dict]:
+        """Pull the commitments out of what someone has been writing."""
+        try:
+            result = self.provider.complete(system=self.promises, messages=[Message("user", written)])
+        except Exception as exc:
+            logger.warning("Could not read promises: %s", exc)
+            return []
+        text = (result.text or "").strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        try:
+            found = json.loads(text or "[]")
+        except json.JSONDecodeError:
+            logger.warning("Promises came back as something other than JSON: %r", text[:120])
+            return []
+        return [item for item in found if isinstance(item, dict) and str(item.get("what", "")).strip()]
+
     chasing = """Someone said they would do something and it is now past when
 they meant to. Ask how it is going in one short line, the way a friend checks in:
 light, no guilt, no lecture. Plain text. Use the language they have been writing

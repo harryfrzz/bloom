@@ -31,6 +31,8 @@ class Briefing:
         ask_about: Callable[[str, str], str | None],
         deliver: Callable[[str, str], bool],
         who: Callable[[], list[str]],
+        allow: Callable[[str], bool] | None = None,
+        scan: Callable[[], int] | None = None,
         at_hour: int = 8,
         at_minute: int = 0,
         sweep_seconds: float = SWEEP_SECONDS,
@@ -41,6 +43,8 @@ class Briefing:
         self.ask_about = ask_about
         self.deliver = deliver
         self.who = who
+        self.allow = allow or (lambda _user: True)
+        self.scan = scan
         self.at_hour = at_hour
         self.at_minute = at_minute
         self.sweep_seconds = sweep_seconds
@@ -61,6 +65,13 @@ class Briefing:
         moment = now or datetime.now().astimezone()
         sent = 0
         if self._is_time(moment):
+            if self.scan is not None and self._briefed_on.get("#scan") != moment.date():
+                self._briefed_on["#scan"] = moment.date()
+                try:
+                    found = self.scan()
+                    logger.info("Found %d new commitment(s) in what they wrote", found)
+                except Exception:
+                    logger.exception("Could not scan for promises")
             for user_id in self.who():
                 if self._briefed_on.get(user_id) == moment.date():
                     continue
@@ -94,6 +105,12 @@ class Briefing:
     def chase(self, *, now: datetime | None = None) -> int:
         asked = 0
         for item in self.commitments.worth_asking_about(now=now):
+            # A check-in is bloom speaking uninvited, so it comes out of the
+            # same daily allowance as everything else unasked for. The morning
+            # briefing does not: that is a standing appointment they set.
+            if not self.allow(item.user_id):
+                logger.info("Not asking about %d today; the daily limit is reached", item.id)
+                continue
             question = self.ask_about(item.what, item.user_id)
             if not question:
                 continue

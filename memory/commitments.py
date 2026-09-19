@@ -20,6 +20,10 @@ class Commitment:
     nudges: int
     last_nudged_at: str | None
     created_at: str
+    # Who it was promised to, and the message it was found in, so the same
+    # promise is never recorded twice.
+    owed_to: str = ""
+    source: str = ""
 
 
 class CommitmentStore:
@@ -49,19 +53,37 @@ class CommitmentStore:
                 created_at TEXT NOT NULL
                 )"""
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(commitments)")}
+            for column in ("owed_to", "source"):
+                if column not in columns:
+                    connection.execute(f"ALTER TABLE commitments ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
             connection.execute("CREATE INDEX IF NOT EXISTS commitments_user ON commitments(user_id, status)")
+            connection.execute("CREATE INDEX IF NOT EXISTS commitments_source ON commitments(source)")
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
         connection.row_factory = sqlite3.Row
         return connection
 
-    def note(self, *, user_id: str, what: str, due_at: str | None = None) -> Commitment:
+    def note(
+        self,
+        *,
+        user_id: str,
+        what: str,
+        due_at: str | None = None,
+        owed_to: str = "",
+        source: str = "",
+    ) -> Commitment | None:
+        """Record a commitment, or None if this one is already on the books."""
         with self._connect() as connection:
+            if source:
+                seen = connection.execute("SELECT id FROM commitments WHERE source = ?", (source,)).fetchone()
+                if seen is not None:
+                    return None
             cursor = connection.execute(
-                "INSERT INTO commitments (user_id, what, due_at, status, nudges, last_nudged_at, created_at)"
-                " VALUES (?, ?, ?, 'open', 0, NULL, ?)",
-                (user_id, what, due_at, _now()),
+                "INSERT INTO commitments (user_id, what, due_at, status, nudges, last_nudged_at, created_at, owed_to, source)"
+                " VALUES (?, ?, ?, 'open', 0, NULL, ?, ?, ?)",
+                (user_id, what, due_at, _now(), owed_to, source),
             )
             row = connection.execute("SELECT * FROM commitments WHERE id = ?", (cursor.lastrowid,)).fetchone()
         return self._row(row)

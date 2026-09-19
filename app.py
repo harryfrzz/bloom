@@ -60,6 +60,7 @@ class BloomApp:
         notify: Callable[[str, str], bool] | None = None,
         speak: Callable[[str, str, str], None] | None = None,
         awaiting: Callable[..., list[dict]] | None = None,
+        sent_by_them: Callable[..., list[dict]] | None = None,
         apple: AppleApps | None = None,
         knowledge: Knowledge | None = None,
         send_file: Callable[[str, str, bytes, str], None] | None = None,
@@ -98,6 +99,7 @@ class BloomApp:
         self.knowledge = knowledge
         if knowledge is not None:
             self.agent.tools["recall"] = knowledge.tool(self._current_user)
+        self.sent_by_them = sent_by_them
         self.commitments = CommitmentStore(self.db_path)
         for tool in self._commitment_tools():
             self.agent.tools[tool.name] = tool
@@ -227,6 +229,8 @@ class BloomApp:
             for item in self.commitments.open_for(user)
         )
         return Briefing(
+            allow=self.interrupts.allow,
+            scan=self._scan_promises if self.sent_by_them is not None else None,
             commitments=self.commitments,
             sources=sources,
             compose=lambda gathered, who="": self.agent.write_briefing(gathered, self._how_they_write(user_id=who)),
@@ -236,6 +240,40 @@ class BloomApp:
             at_hour=int(hour or 8),
             at_minute=int(minute or 0),
         )
+
+    def _scan_promises(self) -> int:
+        """Read what they have written to other people and note what they promised.
+
+        bloom answers through their account, so its own replies look like
+        theirs: its threads are left out, or every offer it made would come
+        back as a promise they had made.
+        """
+        if self.sent_by_them is None:
+            return 0
+        people = self._people()
+        mine = tuple(identity.thread_id for identity in self.identities.everyone())
+        try:
+            written = self.sent_by_them(days=14, skip_threads=mine)
+        except Exception as exc:
+            logger.warning("Could not read what they have written: %s", exc)
+            return 0
+        if not written:
+            return 0
+        found = self.agent.find_promises(
+            "\n".join(f"[{row['guid']}] to {row['to']} on {row['when'][:10]}: {row['text']}" for row in written)
+        )
+        owner = people[0] if people else "cli"
+        kept = 0
+        for promise in found:
+            noted = self.commitments.note(
+                user_id=owner,
+                what=str(promise.get("what", "")).strip(),
+                due_at=str(promise.get("due") or "") or None,
+                owed_to=str(promise.get("owed_to") or ""),
+                source=str(promise.get("guid") or ""),
+            )
+            kept += int(noted is not None)
+        return kept
 
     def _people(self) -> list[str]:
         """Everyone bloom has a way of reaching."""

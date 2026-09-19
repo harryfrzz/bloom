@@ -524,6 +524,46 @@ class BlueBubblesAdapter:
                 break
         return waiting
 
+    def recent_sent(self, *, days: int = 14, limit: int = 400, skip_threads: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        """What this person actually wrote to other people.
+
+        bloom replies through their account, so its own messages come back as
+        theirs. Its threads are excluded, or every offer bloom made would be
+        read back as a promise the person had made themselves.
+        """
+        query = urlencode({"guid": self.password})
+        after = int((time.time() - days * 86_400) * 1000)
+        body = json.dumps(
+            {"limit": max(1, min(limit, 1000)), "sort": "DESC", "after": after, "with": ["chats"]}
+        ).encode()
+        request = Request(
+            f"{self.base_url}/api/v1/message/query?{query}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self._open(request) as response:
+            messages = json.loads(response.read()).get("data") or []
+        names = self._contacts()
+        written = []
+        for message in messages:
+            text = str(message.get("text") or "").strip()
+            chats = message.get("chats") or []
+            guid = (chats[0].get("guid") if chats else "") or ""
+            if not message.get("isFromMe") or not text or guid in skip_threads:
+                continue
+            identifier = str((chats[0].get("chatIdentifier") if chats else "") or "")
+            when = message.get("dateCreated") or 0
+            written.append(
+                {
+                    "guid": str(message.get("guid") or ""),
+                    "to": names.get(re.sub(r"[^0-9]", "", identifier)[-10:], identifier),
+                    "text": text[:300],
+                    "when": datetime.fromtimestamp(when / 1000).isoformat() if when else "",
+                }
+            )
+        return written
+
     def _recent_messages(self, after_ms: int) -> list[dict[str, Any]]:
         query = urlencode({"guid": self.password})
         # Attachments included, or a polled voice note arrives with no audio to

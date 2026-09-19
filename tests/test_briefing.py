@@ -76,6 +76,29 @@ class CommitmentTests(unittest.TestCase):
         self.assertFalse(keeper.settle(item.id, user_id="someone-else"))
 
 
+class PromiseTests(unittest.TestCase):
+    def test_the_same_promise_is_never_recorded_twice(self):
+        keeper = store()
+        first = keeper.note(user_id="u", what="send the deck", source="MSG-1")
+        again = keeper.note(user_id="u", what="send the deck", source="MSG-1")
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(again)
+        self.assertEqual(len(keeper.open_for("u")), 1)
+
+    def test_a_promise_remembers_who_it_was_made_to(self):
+        keeper = store()
+        item = keeper.note(user_id="u", what="send the deck", owed_to="Arun", source="MSG-2")
+
+        self.assertEqual(item.owed_to, "Arun")
+
+    def test_promises_noted_in_conversation_need_no_source(self):
+        keeper = store()
+
+        self.assertIsNotNone(keeper.note(user_id="u", what="one thing"))
+        self.assertIsNotNone(keeper.note(user_id="u", what="another thing"))
+
+
 class BriefingTests(unittest.TestCase):
     def test_a_briefing_gathers_what_it_can_and_sends_it(self):
         sent = []
@@ -124,6 +147,25 @@ class BriefingTests(unittest.TestCase):
 
         made.sweep(now=datetime(2026, 9, 21, 6, 30).astimezone())
         self.assertEqual(sent, [])
+
+    def test_check_ins_come_out_of_the_daily_allowance(self):
+        keeper = store()
+        keeper.note(user_id="u", what="send it", due_at=(datetime.now(UTC) - timedelta(hours=1)).isoformat())
+        sent = []
+        made = Briefing(
+            commitments=keeper,
+            sources={},
+            compose=lambda gathered, who: "x",
+            ask_about=lambda what, who: "how's it going?",
+            deliver=lambda user, text: sent.append(text) or True,
+            who=lambda: [],
+            allow=lambda _user: False,
+        )
+
+        self.assertEqual(made.chase(), 0)
+        self.assertEqual(sent, [])
+        # Refused for today, not used up: it can still be asked tomorrow.
+        self.assertEqual(len(keeper.worth_asking_about()), 1)
 
     def test_a_check_in_is_recorded_even_if_delivery_half_fails(self):
         keeper = store()
