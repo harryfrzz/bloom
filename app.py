@@ -21,6 +21,7 @@ from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
 from tasks.watcher import Watcher
 from tools.apple import AppleApps
+from tools.invite import invite_tool
 from tools.location import NetworkLocation
 
 
@@ -59,6 +60,7 @@ class BloomApp:
         awaiting: Callable[..., list[dict]] | None = None,
         apple: AppleApps | None = None,
         knowledge: Knowledge | None = None,
+        send_file: Callable[[str, str, bytes, str], None] | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -87,6 +89,9 @@ class BloomApp:
             self.agent.tools["waiting_on_you"] = self._waiting_tool(awaiting)
         for tool in (apple or AppleApps()).tools():
             self.agent.tools[tool.name] = tool
+        if send_file is not None:
+            invite = invite_tool(send_file=send_file, thread_id=self._current_thread)
+            self.agent.tools[invite.name] = invite
         self.knowledge = knowledge
         if knowledge is not None:
             self.agent.tools["recall"] = knowledge.tool(self._current_user)
@@ -198,6 +203,10 @@ class BloomApp:
             },
             handler=handler,
         )
+
+    def _current_thread(self) -> str | None:
+        incoming = self._active_inbound.get()
+        return incoming.thread_id if incoming else None
 
     def _current_user(self) -> str:
         incoming = self._active_inbound.get()

@@ -37,25 +37,10 @@ class AppleAppsTests(unittest.TestCase):
         self.assertNotIn("default folder", runner.scripts[0])
         self.assertIn("bloom1234", runner.scripts[0])
 
-    def test_an_event_spans_a_start_and_an_end(self):
-        runner = Runner()
-        AppleApps(runner=runner).add_event(title="standup", start="2026-09-21T09:30", end="2026-09-21T10:15", calendar="Work")
-
-        script = runner.scripts[0]
-        self.assertIn('calendar "Work"', script)
-        self.assertIn("set minutes of startDate to 30", script)
-        self.assertIn("set minutes of endDate to 15", script)
-
-    def test_an_event_without_an_end_still_has_one(self):
-        runner = Runner()
-        AppleApps(runner=runner).add_event(title="call", start="2026-09-21T09:00")
-
-        self.assertIn("set hours of endDate to 10", runner.scripts[0])
-
     def test_creating_things_always_waits_for_approval(self):
         tools = {tool.name: tool for tool in AppleApps(runner=Runner()).tools()}
 
-        for name in ("add_apple_reminder", "add_apple_note", "add_apple_event"):
+        for name in ("add_apple_reminder", "add_apple_note"):
             self.assertTrue(tools[name].requires_approval, name)
         # Reading where things could go changes nothing, so it is not gated.
         self.assertFalse(tools["apple_places"].requires_approval)

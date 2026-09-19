@@ -162,29 +162,6 @@ class AppleApps:
                 requires_approval=True,
             ),
             Tool(
-                name="add_apple_event",
-                description=(
-                    "Put something in the Calendar app on this Mac: a meeting, a class, anything that "
-                    "happens at a particular time. Use it when a time matters, not for a task."
-                ),
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "start": {"type": "string", "description": "ISO time, e.g. 2026-09-21T17:00"},
-                        "end": {"type": "string", "description": "ISO time. Defaults to an hour later."},
-                        "calendar": {"type": "string", "description": "Which calendar. Omit for the default."},
-                        "location": {"type": "string"},
-                    },
-                    "required": ["title", "start"],
-                },
-                handler=guard(lambda a: self.add_event(
-                    title=a["title"], start=a["start"], end=a.get("end"),
-                    calendar=a.get("calendar"), location=a.get("location", ""),
-                )),
-                requires_approval=True,
-            ),
-            Tool(
                 name="apple_places",
                 description=(
                     "The Reminders lists, Notes folders and calendars that exist on this Mac. Read it "

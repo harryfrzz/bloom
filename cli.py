@@ -114,6 +114,9 @@ def serve_imessage() -> int:
         speak=speak if voice is not None else None,
         awaiting=adapter.awaiting_reply,
         knowledge=Knowledge.from_environment(),
+        send_file=lambda thread_id, filename, data, content_type: adapter.send_attachment(
+            thread_id=thread_id, filename=filename, data=data, content_type=content_type, is_audio=False
+        ),
     )
     print(f"Listening for BlueBubbles webhooks on http://{adapter.host}:{adapter.port}/bluebubbles/webhook")
     print(f"Also polling {adapter.base_url} every {adapter.poll_interval:g}s in case the server stops emitting events")
