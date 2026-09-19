@@ -114,6 +114,7 @@ def serve_imessage() -> int:
         speak=speak if voice is not None else None,
         awaiting=adapter.awaiting_reply,
         knowledge=Knowledge.from_environment(),
+        brief_at=os.getenv("BLOOM_BRIEF_AT", "08:00"),
         send_file=lambda thread_id, filename, data, content_type: adapter.send_attachment(
             thread_id=thread_id, filename=filename, data=data, content_type=content_type, is_audio=False
         ),

@@ -224,6 +224,39 @@ into something that succeeded, and never invent an outcome."""
             return True
         return any(mark in rewritten.lower() for mark in cls.UNDONE)
 
+    briefing = """Write someone's morning catch-up from the notes below. Lead
+with whatever actually changes their day, drop anything that does not, and never
+pad it out to seem thorough. A few short lines, the way a friend would text it,
+plain text with no markdown and no headings. Say nothing about where the
+information came from. Use the language they have been writing in."""
+
+    def write_briefing(self, gathered: str, like: str = "") -> str | None:
+        try:
+            result = self.provider.complete(
+                system=self.briefing,
+                messages=[Message("user", f"They write like this: {like or 'English'}\n\nNotes:\n{gathered}")],
+            )
+        except Exception as exc:
+            logger.warning("Could not write a briefing: %s", exc)
+            return None
+        return (result.text or "").strip() or None
+
+    chasing = """Someone said they would do something and it is now past when
+they meant to. Ask how it is going in one short line, the way a friend checks in:
+light, no guilt, no lecture. Plain text. Use the language they have been writing
+in. Do not offer to do it for them and do not ask more than one question."""
+
+    def ask_how_it_went(self, what: str, like: str = "") -> str | None:
+        try:
+            result = self.provider.complete(
+                system=self.chasing,
+                messages=[Message("user", f"They write like this: {like or 'English'}\n\nThey said they would: {what}")],
+            )
+        except Exception as exc:
+            logger.warning("Could not write a nudge: %s", exc)
+            return None
+        return (result.text or "").strip() or None
+
     def acknowledge(self, user_text: str) -> str | None:
         """A line to send while the real answer is still being worked out.
 

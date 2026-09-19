@@ -50,6 +50,36 @@ class AppleApps:
         script = 'tell application "Calendar" to return name of every calendar whose writable is true'
         return [name.strip() for name in self._run(script).split(",") if name.strip()]
 
+    def today(self) -> str:
+        """Today's events and whatever is still not ticked off."""
+        parts = []
+        try:
+            events = self._run(
+                'set startOf to (current date)\n'
+                "set hours of startOf to 0\nset minutes of startOf to 0\nset seconds of startOf to 0\n"
+                "set endOf to startOf + (1 * days)\n"
+                'tell application "Calendar"\n'
+                "set out to {}\n"
+                "repeat with c in calendars\n"
+                "repeat with e in (every event of c whose start date is greater than or equal to startOf "
+                "and start date is less than endOf)\n"
+                'set end of out to (summary of e) & " at " & (time string of (start date of e))\n'
+                "end repeat\nend repeat\nend tell\nreturn out"
+            )
+            if events:
+                parts.append(f"In the calendar today: {events}")
+        except Exception as exc:
+            logger.warning("Could not read today's calendar: %s", exc)
+        try:
+            open_items = self._run(
+                'tell application "Reminders" to return name of (every reminder of every list whose completed is false)'
+            )
+            if open_items:
+                parts.append(f"Still on the reminder list: {open_items}")
+        except Exception as exc:
+            logger.warning("Could not read reminders: %s", exc)
+        return "\n".join(parts)
+
     # --- writing ---------------------------------------------------------
 
     def add_reminder(self, *, title: str, due: str | None = None, list_name: str | None = None, note: str = "") -> str:

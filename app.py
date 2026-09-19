@@ -15,10 +15,12 @@ from channels.base import InboundMessage
 from memory.threads import ThreadStore
 from memory.approvals import ApprovalStore
 from memory.identities import IdentityStore
+from memory.commitments import CommitmentStore
 from memory.knowledge import Knowledge
 from memory.watches import WatchStore
 from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
+from tasks.briefing import Briefing
 from tasks.watcher import Watcher
 from tools.apple import AppleApps
 from tools.invite import invite_tool
@@ -61,6 +63,7 @@ class BloomApp:
         apple: AppleApps | None = None,
         knowledge: Knowledge | None = None,
         send_file: Callable[[str, str, bytes, str], None] | None = None,
+        brief_at: str = "",
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -95,6 +98,13 @@ class BloomApp:
         self.knowledge = knowledge
         if knowledge is not None:
             self.agent.tools["recall"] = knowledge.tool(self._current_user)
+        self.commitments = CommitmentStore(self.db_path)
+        for tool in self._commitment_tools():
+            self.agent.tools[tool.name] = tool
+        self.briefing: Briefing | None = None
+        if notify is not None and brief_at:
+            self.briefing = self._build_briefing(notify, brief_at, apple or AppleApps(), awaiting)
+            self.briefing.start()
         self.watches = WatchStore(self.db_path)
         self.watcher: Watcher | None = None
         # Watching needs somewhere to read from and someone to tell; without
@@ -204,6 +214,97 @@ class BloomApp:
             handler=handler,
         )
 
+    def _build_briefing(self, notify, brief_at: str, apple: AppleApps, awaiting) -> Briefing:
+        hour, _, minute = brief_at.partition(":")
+        sources: dict[str, Callable[[], str]] = {"Today": apple.today}
+        if awaiting is not None:
+            sources["People waiting on a reply"] = lambda: "\n".join(
+                f"{row['who']}: {row['said']}" for row in awaiting(days=3)
+            )
+        sources["Things they said they would do"] = lambda: "\n".join(
+            f"{item.what}{f' (by {item.due_at})' if item.due_at else ''}"
+            for user in self._people()
+            for item in self.commitments.open_for(user)
+        )
+        return Briefing(
+            commitments=self.commitments,
+            sources=sources,
+            compose=lambda gathered, who="": self.agent.write_briefing(gathered, self._how_they_write(user_id=who)),
+            ask_about=lambda what, who="": self.agent.ask_how_it_went(what, self._how_they_write(user_id=who)),
+            deliver=notify,
+            who=self._people,
+            at_hour=int(hour or 8),
+            at_minute=int(minute or 0),
+        )
+
+    def _people(self) -> list[str]:
+        """Everyone bloom has a way of reaching."""
+        return [identity.user_id for identity in self.identities.everyone()]
+
+    def _commitment_tools(self) -> list[Tool]:
+        def note(arguments: dict) -> str:
+            what = str(arguments.get("what", "")).strip()
+            if not what:
+                return "Say what they committed to."
+            item = self.commitments.note(
+                user_id=self._current_user(), what=what, due_at=str(arguments.get("by") or "") or None
+            )
+            return f"Noted (#{item.id}): {what}" + (f", by {item.due_at}" if item.due_at else "")
+
+        def listing(_arguments: dict) -> str:
+            items = self.commitments.open_for(self._current_user())
+            if not items:
+                return "Nothing outstanding."
+            return "\n".join(
+                f"#{item.id}: {item.what}" + (f" (by {item.due_at})" if item.due_at else "") for item in items
+            )
+
+        def settle(arguments: dict, status: str) -> str:
+            try:
+                number = int(arguments.get("id"))
+            except (TypeError, ValueError):
+                return "Which one? Give its number."
+            done = self.commitments.settle(number, user_id=self._current_user(), status=status)
+            return f"Marked #{number} as {status}." if done else f"Nothing open with the number {number}."
+
+        return [
+            Tool(
+                name="note_commitment",
+                description=(
+                    "Record something the user said they would do, so bloom can ask how it went later. "
+                    "Use it when they say they will do something by a time — send a deck, apply for "
+                    "something, call someone back — not for things they ask bloom to do."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "what": {"type": "string", "description": "What they said they would do, in their words."},
+                        "by": {"type": "string", "description": "ISO time it is meant to be done by, if they said."},
+                    },
+                    "required": ["what"],
+                },
+                handler=note,
+            ),
+            Tool(
+                name="list_commitments",
+                description="What the user still has outstanding that bloom knows about.",
+                parameters={"type": "object", "properties": {}},
+                handler=listing,
+            ),
+            Tool(
+                name="commitment_done",
+                description="Mark something they committed to as finished, so bloom stops asking.",
+                parameters={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+                handler=lambda arguments: settle(arguments, "done"),
+            ),
+            Tool(
+                name="commitment_dropped",
+                description="Drop something they committed to; they are not doing it and bloom should let it go.",
+                parameters={"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+                handler=lambda arguments: settle(arguments, "dropped"),
+            ),
+        ]
+
     def _current_thread(self) -> str | None:
         incoming = self._active_inbound.get()
         return incoming.thread_id if incoming else None
@@ -221,20 +322,23 @@ class BloomApp:
         plain = f"Before I {action} — {details}. Reply approve {pending.token} to go ahead, or deny {pending.token} to drop it."
         return self._in_their_words(plain, self._how_they_write(incoming)) or plain
 
-    def _how_they_write(self, incoming: InboundMessage | None) -> str:
+    def _how_they_write(self, incoming: InboundMessage | None = None, user_id: str = "") -> str:
         """A sample of their own words, long enough to show the language.
 
         The message in hand is often "approve" or "yes", which says nothing
-        about the language the conversation is happening in.
+        about the language the conversation is happening in, and anything sent
+        unprompted has no message in hand at all.
         """
+        who = user_id or (incoming.user_id if incoming else "")
         candidates = [incoming.text] if incoming else []
-        if incoming:
-            candidates += [
-                message.content
-                for message in reversed(self.histories.get(incoming.user_id, []))
-                if message.role == "user"
-            ]
-        return next((text for text in candidates if len(text.split()) > 2), "")
+        candidates += [
+            message.content for message in reversed(self.histories.get(who, [])) if message.role == "user"
+        ]
+        found = next((text for text in candidates if len(text.split()) > 2), "")
+        if found:
+            return found
+        identity = self.identities.get(who) if who else None
+        return identity.writes_like if identity else ""
 
     def _in_their_words(self, prompt: str, asked: str) -> str | None:
         """Ask for approval in whatever language they are speaking."""
@@ -330,7 +434,14 @@ class BloomApp:
         return "Task started locally. I will report back when it is ready."
 
     def handle(self, incoming: InboundMessage) -> str:
-        self.identities.remember(channel=incoming.channel, sender=incoming.sender, thread_id=incoming.thread_id)
+        self.identities.remember(
+            channel=incoming.channel,
+            sender=incoming.sender,
+            thread_id=incoming.thread_id,
+            # A bare "approve" says nothing about their language, so it must
+            # not overwrite the sample anything unprompted is written from.
+            writes_like=incoming.text if len(incoming.text.split()) > 2 else "",
+        )
         decision = self._parse_decision(incoming.text)
         if decision:
             token, approved = decision
