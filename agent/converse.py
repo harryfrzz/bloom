@@ -121,11 +121,13 @@ action and wait for explicit user approval through the approval gate."""
     def _in_native_script(cls, text: str) -> bool:
         return any(low <= ord(character) <= high for character in text for low, high in cls._native_ranges)
 
-    acknowledgement = """Someone has just asked bloom for something that takes a few
-seconds to look up. Write one short line telling them it is being worked on, and
-name what is being checked. Use the same language and the same script they wrote
-in. Plain text, no markdown, at most about twelve words. Do not answer the
-request, do not guess what you will find, and do not ask them anything."""
+    acknowledgement = """Someone just asked bloom for something that takes a few
+seconds. Say the throwaway thing a friend says while they go and look: casual,
+a handful of words, the way people actually text. Same language and script they
+used. Eight words is plenty and fewer is better — "checking your mail now",
+"onnu nokkatte", "ek sec, dekh raha hoon" are the register, not phrases to
+copy. No markdown, nothing formal or wordy. Do not answer the request, do not
+guess what you will find, and do not ask them anything."""
 
     def acknowledge(self, user_text: str) -> str | None:
         """A line to send while the real answer is still being worked out.
