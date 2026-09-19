@@ -37,13 +37,34 @@ class ApprovalStore:
             )
 
     def request(self, *, user_id: str, tool_name: str, arguments: dict) -> PendingApproval:
-        token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8].upper()
+        payload = json.dumps(arguments, sort_keys=True)
         with sqlite3.connect(self.path) as connection:
+            # The same action asked about twice is one decision, not two. A
+            # fresh code each time means an answer to the first no longer
+            # matches, and the conversation goes round in circles.
+            existing = connection.execute(
+                "SELECT token FROM approvals WHERE user_id = ? AND tool_name = ? AND arguments = ? AND status = 'pending'"
+                " ORDER BY created_at DESC LIMIT 1",
+                (user_id, tool_name, payload),
+            ).fetchone()
+            if existing is not None:
+                return PendingApproval(existing[0], user_id, tool_name, arguments, "pending")
+            token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8].upper()
             connection.execute(
                 "INSERT INTO approvals VALUES (?, ?, ?, ?, 'pending', ?, NULL)",
-                (token, user_id, tool_name, json.dumps(arguments, sort_keys=True), _now()),
+                (token, user_id, tool_name, payload, _now()),
             )
         return PendingApproval(token, user_id, tool_name, arguments, "pending")
+
+    def waiting_for(self, user_id: str) -> list[PendingApproval]:
+        """Everything this person has been asked about and not yet answered."""
+        with sqlite3.connect(self.path) as connection:
+            rows = connection.execute(
+                "SELECT token, user_id, tool_name, arguments, status FROM approvals"
+                " WHERE user_id = ? AND status = 'pending' ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [PendingApproval(row[0], row[1], row[2], json.loads(row[3]), row[4]) for row in rows]
 
     def decide(self, *, user_id: str, token: str, approve: bool) -> PendingApproval | None:
         with sqlite3.connect(self.path) as connection:

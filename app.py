@@ -209,7 +209,27 @@ class BloomApp:
         pending = self.approvals.request(user_id=user_id, tool_name=tool_name, arguments=arguments)
         details = ", ".join(f"{key}: {self._short(value)}" for key, value in arguments.items())
         action = self._describe(tool_name, arguments)
-        return f"Before I {action} — {details}. Reply approve {pending.token} to go ahead, or deny {pending.token} to drop it."
+        plain = f"Before I {action} — {details}. Reply approve {pending.token} to go ahead, or deny {pending.token} to drop it."
+        return self._in_their_words(plain, self._how_they_write(incoming)) or plain
+
+    def _how_they_write(self, incoming: InboundMessage | None) -> str:
+        """A sample of their own words, long enough to show the language.
+
+        The message in hand is often "approve" or "yes", which says nothing
+        about the language the conversation is happening in.
+        """
+        candidates = [incoming.text] if incoming else []
+        if incoming:
+            candidates += [
+                message.content
+                for message in reversed(self.histories.get(incoming.user_id, []))
+                if message.role == "user"
+            ]
+        return next((text for text in candidates if len(text.split()) > 2), "")
+
+    def _in_their_words(self, prompt: str, asked: str) -> str | None:
+        """Ask for approval in whatever language they are speaking."""
+        return self.agent.rephrase(prompt, asked) if asked else None
 
     @staticmethod
     def _describe(tool_name: str, arguments: dict) -> str:
@@ -305,18 +325,28 @@ class BloomApp:
         decision = self._parse_decision(incoming.text)
         if decision:
             token, approved = decision
+            if token is None:
+                # "approve" on its own answers whatever was last asked about.
+                waiting = self.approvals.waiting_for(incoming.user_id)
+                if not waiting:
+                    decision = None
+                else:
+                    token = waiting[0].token
+        if decision:
             pending = self.approvals.decide(user_id=incoming.user_id, token=token, approve=approved)
+            like = self._how_they_write(incoming)
+            said = lambda text: self._in_their_words(text, like) or text
             if pending is None:
-                return "I couldn't find a pending approval with that code."
+                return said("I couldn't find anything waiting on that code.")
             if not approved:
-                return "Okay, I cancelled that action."
+                return said("Alright, I've dropped it.")
             tool = self._tools_for(incoming.user_id).get(pending.tool_name)
             if tool is None or not tool.needs_approval(pending.arguments):
-                return "That approval is no longer safe to execute; I cancelled it."
+                return said("That one is no longer safe to run, so I've dropped it.")
             try:
-                return f"Done: {tool.handler(pending.arguments)}"
+                return said(f"Done. {tool.handler(pending.arguments)}")
             except Exception as exc:
-                return f"I couldn't complete the approved action: {type(exc).__name__}: {exc}"
+                return said(f"That didn't work: {type(exc).__name__}: {exc}")
         history = self.histories.setdefault(incoming.user_id, [])
         token = self._active_inbound.set(incoming)
         started = self._task_started.set(False)
@@ -352,11 +382,22 @@ class BloomApp:
         return {**self.agent.tools, **{tool.name: tool for tool in external}}
 
     @staticmethod
-    def _parse_decision(text: str) -> tuple[str, bool] | None:
+    def _parse_decision(text: str) -> tuple[str | None, bool] | None:
+        """An answer to a pending question, if that is what this is.
+
+        A bare "approve" is what people actually type; requiring the code to
+        be repeated meant the answer fell through to the model, which asked
+        again with a new code, forever.
+        """
         words = text.strip().split()
-        if len(words) != 2 or words[0].lower() not in {"approve", "deny"}:
+        if not words or words[0].lower().strip(".,!") not in {"approve", "approved", "deny", "denied"}:
             return None
-        return words[1], words[0].lower() == "approve"
+        approved = words[0].lower().startswith("approve")
+        if len(words) == 1:
+            return None, approved
+        if len(words) == 2:
+            return words[1].strip(".,!"), approved
+        return None
 
     def proactive_text(self, *, user_id: str, text: str) -> str | None:
         """A final local hard limit before an event may interrupt a person."""

@@ -56,6 +56,11 @@ message. Reply out loud with speak only when they spoke to you or asked you to,
 and keep spoken replies to a few sentences; anything with a list or a link is
 better read than heard. When you do speak, say so briefly in text too rather
 than sending a voice note into silence.
+Never ask whether you should go ahead with something before using the tool for
+it. Anything that changes the world is held for the person's confirmation
+already, with a code for them to reply to, so asking first turns one decision
+into two and the code arrives after they thought they had agreed. Call the
+tool; they will be asked exactly once.
 A reminder, a note and a calendar entry are three different things in three
 different apps: something to tick off belongs in Reminders, something to keep
 and read later in Notes, something happening at a time in the Calendar. Two
@@ -175,6 +180,49 @@ and count the rest."""
             return None
         line = (result.text or "").strip()
         return line or None
+
+    rephrasing = """Rewrite the message below so it reads naturally to someone
+writing in the same language and script as the person it is going to. If they
+are writing English, return it as it is. Keep every code, number, date and name
+exactly as written — a changed code cannot be answered. Keep it short and plain,
+no markdown. Reply with the rewritten message alone.
+Say exactly what the message says and nothing else. If it says something was
+cancelled, dropped or failed, your rewrite must say that too: never turn it
+into something that succeeded, and never invent an outcome."""
+
+    def rephrase(self, message: str, like: str) -> str | None:
+        """Put a fixed message into the language the person is speaking."""
+        try:
+            result = self.provider.complete(
+                system=self.rephrasing,
+                messages=[Message("user", f"They write like this:\n{like}\n\nMessage to rewrite:\n{message}")],
+            )
+        except Exception as exc:
+            logger.warning("Could not rephrase a message: %s", exc)
+            return None
+        rewritten = (result.text or "").strip()
+        if not rewritten:
+            return None
+        # A rewrite that dropped the code is worse than plain English.
+        codes = [word for word in message.split() if word.isupper() and word.isalnum() and len(word) >= 6]
+        if not all(code in rewritten for code in codes):
+            return None
+        return rewritten if self._same_outcome(message, rewritten) else None
+
+    # Words that mean nothing happened, in the languages bloom writes.
+    UNDONE = ("dropped", "cancel", "didn't work", "did not work", "no longer", "couldn't", "could not",
+              "venda", "illa", "cheythilla", "nahi", "nahin")
+
+    @classmethod
+    def _same_outcome(cls, original: str, rewritten: str) -> bool:
+        """Refuse a rewrite that turned a cancellation into a success.
+
+        A status message that lies about what happened is worse than one in
+        the wrong language, and rewriting is exactly where that slips in.
+        """
+        if not any(mark in original.lower() for mark in cls.UNDONE):
+            return True
+        return any(mark in rewritten.lower() for mark in cls.UNDONE)
 
     def acknowledge(self, user_text: str) -> str | None:
         """A line to send while the real answer is still being worked out.

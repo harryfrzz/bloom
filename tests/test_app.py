@@ -83,5 +83,5 @@ class AppTests(unittest.TestCase):
             prompt = app.handle(incoming)
             token = prompt.split("approve ")[1].split(" ")[0]
             self.assertEqual(sent, [])
-            self.assertEqual(app.handle(InboundMessage("imessage", "+1555", "iMessage;+;chat", f"approve {token}")), "Done: sent")
+            self.assertEqual(app.handle(InboundMessage("imessage", "+1555", "iMessage;+;chat", f"approve {token}")), "Done. sent")
             self.assertEqual(sent, ["a@example.com"])
