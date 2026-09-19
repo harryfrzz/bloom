@@ -111,6 +111,7 @@ def serve_imessage() -> int:
         session_for=getattr(connector, "session_for", None),
         notify=notify,
         speak=speak if voice is not None else None,
+        awaiting=adapter.awaiting_reply,
     )
     print(f"Listening for BlueBubbles webhooks on http://{adapter.host}:{adapter.port}/bluebubbles/webhook")
     print(f"Also polling {adapter.base_url} every {adapter.poll_interval:g}s in case the server stops emitting events")

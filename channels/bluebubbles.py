@@ -5,6 +5,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import sqlite3
 import ssl
 import subprocess
@@ -14,6 +15,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import replace
+from datetime import datetime
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -65,6 +67,7 @@ class BlueBubblesAdapter:
         self.failure_text = failure_text
         self._opener = opener
         self._method: str | None = None
+        self._names: dict[str, str] | None = None
         self._seen: set[str] = set()
         self._seen_order: deque[str] = deque()
         self._seen_lock = threading.Lock()
@@ -443,6 +446,83 @@ class BlueBubblesAdapter:
         except Exception as exc:
             logger.warning("Could not write a holding line for %s: %s", message.user_id, exc)
             return self.ack_text
+
+    # Texts that no one is waiting on a reply to.
+    AUTOMATED = (
+        "one time password", "do not share", "dear customer", "verification code", "is your otp",
+        "otp is", "unsubscribe", "cashback", "recharge", "click here", "t&c apply", "has been delivered",
+        "your order", "is now available on whatsapp",
+    )
+
+    def _contacts(self) -> dict[str, str]:
+        """Phone numbers to names, so a list of chats reads like people."""
+        if self._names is not None:
+            return self._names
+        names: dict[str, str] = {}
+        try:
+            query = urlencode({"guid": self.password})
+            with self._open(Request(f"{self.base_url}/api/v1/contact?{query}", method="GET")) as response:
+                people = json.loads(response.read()).get("data") or []
+            for person in people:
+                label = str(person.get("displayName") or person.get("firstName") or "").strip()
+                if not label:
+                    continue
+                for number in person.get("phoneNumbers") or []:
+                    address = str(number.get("address") or "")
+                    if address:
+                        names[re.sub(r"[^0-9]", "", address)[-10:]] = label
+        except Exception as exc:
+            logger.warning("Could not read contacts: %s", exc)
+        self._names = names
+        return names
+
+    @classmethod
+    def _is_a_person(cls, identifier: str, text: str) -> bool:
+        """A real person, rather than a short code, a bot, or an OTP."""
+        if "@" in identifier:
+            return "botplatform" not in identifier and "noreply" not in identifier
+        if not identifier.startswith("+") or not identifier[1:].isdigit():
+            return False  # alphanumeric sender ids and (smsft) gateways
+        lowered = text.lower()
+        return not any(mark in lowered for mark in cls.AUTOMATED)
+
+    def awaiting_reply(self, *, days: int = 14, limit: int = 20) -> list[dict[str, Any]]:
+        """Conversations where someone spoke last and is still waiting on you."""
+        query = urlencode({"guid": self.password})
+        body = json.dumps({"limit": 200, "offset": 0, "with": ["lastMessage"], "sort": "lastmessage"}).encode()
+        request = Request(
+            f"{self.base_url}/api/v1/chat/query?{query}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self._open(request) as response:
+            chats = json.loads(response.read()).get("data") or []
+        names = self._contacts()
+        cutoff = (time.time() - days * 86_400) * 1000
+        waiting: list[dict[str, Any]] = []
+        for chat in chats:
+            last = chat.get("lastMessage") or {}
+            text = str(last.get("text") or "").strip()
+            when = last.get("dateCreated") or 0
+            identifier = str(chat.get("chatIdentifier") or "")
+            if last.get("isFromMe") or not text or when < cutoff:
+                continue
+            if not self._is_a_person(identifier, text):
+                continue
+            waiting.append(
+                {
+                    "who": str(chat.get("displayName") or "").strip()
+                    or names.get(re.sub(r"[^0-9]", "", identifier)[-10:], identifier),
+                    "chat_guid": chat.get("guid"),
+                    "said": text[:200],
+                    "when": datetime.fromtimestamp(when / 1000).strftime("%d %b %H:%M") if when else "",
+                    "hours_ago": round((time.time() * 1000 - when) / 3_600_000, 1) if when else None,
+                }
+            )
+            if len(waiting) >= limit:
+                break
+        return waiting
 
     def _recent_messages(self, after_ms: int) -> list[dict[str, Any]]:
         query = urlencode({"guid": self.password})

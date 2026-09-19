@@ -54,6 +54,7 @@ class BloomApp:
         session_for: Callable[[str], Any] | None = None,
         notify: Callable[[str, str], bool] | None = None,
         speak: Callable[[str, str, str], None] | None = None,
+        awaiting: Callable[..., list[dict]] | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -78,6 +79,8 @@ class BloomApp:
         self.agent.tools["current_location"] = (location or NetworkLocation.from_environment()).tool()
         if speak is not None:
             self.agent.tools["speak"] = self._voice_tool(speak)
+        if awaiting is not None:
+            self.agent.tools["waiting_on_you"] = self._waiting_tool(awaiting)
         self.watches = WatchStore(self.db_path)
         self.watcher: Watcher | None = None
         # Watching needs somewhere to read from and someone to tell; without
@@ -138,6 +141,37 @@ class BloomApp:
                     "language": {"type": "string", "description": "Language code, e.g. en-IN, hi-IN, ml-IN."},
                 },
                 "required": ["text"],
+            },
+            handler=handler,
+        )
+
+    def _waiting_tool(self, awaiting: Callable[..., list[dict]]) -> Tool:
+        def handler(arguments: dict) -> str:
+            try:
+                days = max(int(arguments.get("days") or 14), 1)
+            except (TypeError, ValueError):
+                days = 14
+            try:
+                rows = awaiting(days=days)
+            except Exception as exc:
+                logger.warning("Could not read who is waiting: %s", exc)
+                return f"Could not read the conversations ({type(exc).__name__})."
+            if not rows:
+                return f"Nobody is waiting on a reply from the last {days} days."
+            return "\n".join(
+                f"{row['who']} ({row['when']}, {row['hours_ago']}h ago): {row['said']}" for row in rows
+            )
+
+        return Tool(
+            name="waiting_on_you",
+            description=(
+                "Conversations where someone messaged the user and got no reply. Short codes, OTPs and "
+                "automated senders are already filtered out, so what comes back is real people. Use it "
+                "when they ask who is waiting, what they have missed, or what needs replying to."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {"days": {"type": "integer", "description": "How far back to look. Defaults to 14."}},
             },
             handler=handler,
         )
