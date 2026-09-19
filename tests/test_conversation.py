@@ -81,6 +81,30 @@ class ConversationTests(unittest.TestCase):
         self.assertNotEqual(kept[0].role, "tool")
         self.assertEqual(kept[-1].content, "newest question")
 
+    def test_the_model_is_told_what_time_it_is(self):
+        from datetime import datetime
+
+        provider = ScriptedProvider([ProviderResponse(text="ok")])
+
+        ConversationAgent(provider).reply([], "remind me tomorrow")
+
+        sent = provider.requests[0]["messages"]
+        clock = next(message for message in sent if message.role == "developer")
+        self.assertIn(datetime.now().astimezone().strftime("%Y-%m-%d"), clock.content)
+        # Beside the newest message, not in the system prompt, which is the
+        # cached prefix every tool schema sits in.
+        self.assertNotIn(datetime.now().strftime("%Y-%m-%d"), provider.requests[0]["system"])
+        self.assertEqual(sent[-1].content, "remind me tomorrow")
+
+    def test_the_clock_survives_a_trimmed_conversation(self):
+        history = [Message("user", "x" * 9_000), Message("assistant", "y" * 9_000)]
+        agent = ConversationAgent(ScriptedProvider([ProviderResponse(text="ok")]))
+
+        conversation = [*history, agent._clock(), Message("user", "and now?")]
+        kept = ConversationAgent._fit(conversation, budget=2_000)
+
+        self.assertIn("developer", [message.role for message in kept])
+
     def test_external_action_is_blocked_without_approval(self):
         called = False
 

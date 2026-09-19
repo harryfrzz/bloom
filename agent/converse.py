@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from collections.abc import Callable, Sequence
 
 from agent.types import Message, Tool
@@ -213,6 +214,22 @@ and count the rest."""
             return text
         return result.text.strip() if result.text and not self._in_native_script(result.text) else text
 
+    @staticmethod
+    def _clock() -> Message:
+        """Now, as the model cannot know it.
+
+        Carried beside the newest message rather than in the system prompt: a
+        changing timestamp there would break the cached prefix that the prompt
+        and every tool schema sit in, on every single request.
+        """
+        now = datetime.now().astimezone()
+        return Message(
+            "developer",
+            f"Right now it is {now:%A %d %B %Y}, {now:%H:%M} {now:%Z}. Today's date is {now:%Y-%m-%d}. "
+            f"Work out anything relative — today, tomorrow, tonight, next Friday — from this, and give "
+            f"tools real dates rather than words.",
+        )
+
     def reply(
         self,
         history: list[Message],
@@ -221,7 +238,7 @@ and count the rest."""
         images: Sequence[str] = (),
         extra_tools: Sequence[Tool] = (),
     ) -> str:
-        conversation = [*history, Message("user", user_text, images=tuple(images))]
+        conversation = [*history, self._clock(), Message("user", user_text, images=tuple(images))]
         available_tools = {**self.tools, **{tool.name: tool for tool in extra_tools}}
         schemas = [tool.response_schema() for tool in available_tools.values()]
         budget = self.conversation_budget
