@@ -13,6 +13,7 @@ class InboundMessage:
     sender: str
     thread_id: str
     text: str
+    images: tuple[str, ...] = ()
 
     @property
     def user_id(self) -> str:

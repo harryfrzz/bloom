@@ -9,6 +9,8 @@ from typing import Any
 class Message:
     role: str
     content: str
+    # Data URLs for anything the person sent as a picture rather than words.
+    images: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

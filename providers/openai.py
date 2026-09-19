@@ -75,7 +75,15 @@ class OpenAIProvider:
         Responses API expects.
         """
         if message.role not in {"tool_call", "tool"}:
-            return {"role": message.role, "content": message.content}
+            if not message.images:
+                return {"role": message.role, "content": message.content}
+            return {
+                "role": message.role,
+                "content": [
+                    {"type": "input_text", "text": message.content},
+                    *({"type": "input_image", "image_url": url} for url in message.images),
+                ],
+            }
         payload = json.loads(message.content)
         if message.role == "tool_call":
             return {

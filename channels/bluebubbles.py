@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hmac
 import json
 import logging
@@ -10,6 +11,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from dataclasses import replace
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -203,6 +205,12 @@ class BlueBubblesAdapter:
 
     # What a voice note looks like across iMessage's audio formats.
     AUDIO_HINTS = ("audio", "caf", "m4a", "mpeg-4-audio", "amr", "wav", "opus", "ogg")
+    # Pictures the model can actually read; HEIC is left out because it cannot.
+    IMAGE_TYPES = ("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp")
+    # A handful at a time, and nothing enormous: every picture is re-sent with
+    # the conversation, and base64 makes it a third larger again.
+    IMAGE_LIMIT = 4
+    IMAGE_BYTES = 4_000_000
 
     @classmethod
     def _is_audio(cls, attachment: Any) -> bool:
@@ -210,6 +218,43 @@ class BlueBubblesAdapter:
             return False
         marks = " ".join(str(attachment.get(key) or "") for key in ("mimeType", "uti", "transferName")).lower()
         return any(hint in marks for hint in cls.AUDIO_HINTS)
+
+    @classmethod
+    def _image_type(cls, attachment: Any) -> str | None:
+        """The media type of a picture bloom can show the model, if it is one."""
+        if not isinstance(attachment, dict):
+            return None
+        mime = str(attachment.get("mimeType") or "").lower()
+        if mime in cls.IMAGE_TYPES:
+            return "image/jpeg" if mime == "image/jpg" else mime
+        name = str(attachment.get("transferName") or "").lower()
+        for suffix, mime in ((".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".gif", "image/gif"), (".webp", "image/webp")):
+            if name.endswith(suffix):
+                return mime
+        return None
+
+    def _pictures(self, data: dict[str, Any]) -> tuple[str, ...]:
+        """Whatever was sent as a picture, ready to hand to the model."""
+        found: list[str] = []
+        for attachment in (data.get("attachments") or [])[: self.IMAGE_LIMIT * 3]:
+            mime = self._image_type(attachment)
+            if mime is None or not isinstance(attachment, dict) or not attachment.get("guid"):
+                continue
+            size = attachment.get("totalBytes")
+            if isinstance(size, int) and size > self.IMAGE_BYTES:
+                logger.warning("Skipping an image of %d bytes, over the %d limit", size, self.IMAGE_BYTES)
+                continue
+            try:
+                raw = self.download_attachment(str(attachment["guid"]))
+            except Exception as exc:
+                logger.warning("Could not download an image: %s", exc)
+                continue
+            if not raw or len(raw) > self.IMAGE_BYTES:
+                continue
+            found.append(f"data:{mime};base64,{base64.b64encode(raw).decode()}")
+            if len(found) >= self.IMAGE_LIMIT:
+                break
+        return tuple(found)
 
     def _with_transcript(self, data: dict[str, Any]) -> dict[str, Any]:
         """Turn a voice note into words before anything else reads the message."""
@@ -288,7 +333,13 @@ class BlueBubblesAdapter:
         if data is None or not self._is_inbound(payload, data) or not self._claim(data.get("guid")):
             return
         data = self._with_transcript(data)
+        pictures = self._pictures(data)
+        if pictures and not str(data.get("text") or "").strip():
+            data = {**data, "text": "[sent a picture with no caption]"}
         message = self.parse_webhook({**payload, "data": data})
+        if message is not None and pictures:
+            message = replace(message, images=pictures)
+            logger.warning("Received %d image(s) from %s", len(pictures), message.user_id)
         if message is None:
             # It got past the inbound checks, so something a person sent is
             # being dropped. Never let that happen quietly again.

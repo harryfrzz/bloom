@@ -198,8 +198,15 @@ and count the rest."""
             return text
         return result.text.strip() if result.text and not self._in_native_script(result.text) else text
 
-    def reply(self, history: list[Message], user_text: str, *, extra_tools: Sequence[Tool] = ()) -> str:
-        conversation = [*history, Message("user", user_text)]
+    def reply(
+        self,
+        history: list[Message],
+        user_text: str,
+        *,
+        images: Sequence[str] = (),
+        extra_tools: Sequence[Tool] = (),
+    ) -> str:
+        conversation = [*history, Message("user", user_text, images=tuple(images))]
         available_tools = {**self.tools, **{tool.name: tool for tool in extra_tools}}
         schemas = [tool.response_schema() for tool in available_tools.values()]
         budget = self.conversation_budget

@@ -265,7 +265,7 @@ class BloomApp:
         started = self._task_started.set(False)
         try:
             tools = tuple(self._tools_for(incoming.user_id).values())
-            answer = self.agent.reply(history, incoming.text, extra_tools=tools)
+            answer = self.agent.reply(history, incoming.text, images=incoming.images, extra_tools=tools)
         finally:
             self._active_inbound.reset(token)
             self._task_started.reset(started)
