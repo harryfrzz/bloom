@@ -85,6 +85,72 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(content[0], {"type": "input_text", "text": "what is this?"})
         self.assertEqual(content[1], {"type": "input_image", "image_url": "data:image/png;base64,AAA"})
 
+    def test_a_picture_is_uploaded_once_however_many_turns_follow(self):
+        uploads = []
+
+        class Files:
+            def create(self, *, file, purpose):
+                uploads.append(purpose)
+                return SimpleNamespace(id="file-abc")
+
+        class Responses:
+            def __init__(self):
+                self.requests = []
+
+            def create(self, **kwargs):
+                self.requests.append(kwargs)
+                return SimpleNamespace(output=(), output_text="ok")
+
+        responses = Responses()
+        provider = OpenAIProvider(client=SimpleNamespace(responses=responses, files=Files()), model="m")
+        url = "data:image/png;base64," + base64.b64encode(b"x" * 20_000).decode()
+        conversation = [Message("user", "what is this?", images=(url,))]
+
+        for _turn in range(4):
+            provider.complete(system="s", messages=conversation)
+
+        self.assertEqual(uploads, ["vision"])
+        # The bytes go once; every turn after that carries only the reference.
+        for request in responses.requests:
+            self.assertEqual(request["input"][0]["content"][1], {"type": "input_image", "file_id": "file-abc"})
+            self.assertLess(len(json.dumps(request["input"])), 500)
+
+    def test_a_failed_upload_falls_back_to_sending_the_bytes(self):
+        class Files:
+            def create(self, **_kwargs):
+                raise RuntimeError("upload is down")
+
+        class Responses:
+            def __init__(self):
+                self.request = None
+
+            def create(self, **kwargs):
+                self.request = kwargs
+                return SimpleNamespace(output=(), output_text="ok")
+
+        responses = Responses()
+        provider = OpenAIProvider(client=SimpleNamespace(responses=responses, files=Files()), model="m")
+
+        provider.complete(system="s", messages=[Message("user", "look", images=("data:image/png;base64,AAA",))])
+
+        self.assertEqual(
+            responses.request["input"][0]["content"][1],
+            {"type": "input_image", "image_url": "data:image/png;base64,AAA"},
+        )
+
+    def test_pictures_are_visible_to_the_context_budget(self):
+        plain = Message("user", "hello")
+        with_picture = Message("user", "hello", images=("data:image/png;base64,AAA",))
+
+        self.assertGreater(ConversationAgent._weight(with_picture), ConversationAgent._weight(plain) + 1000)
+        # Before this they weighed nothing, so the overflow retry could not act.
+        self.assertEqual(len(ConversationAgent._fit([with_picture, with_picture, with_picture], budget=5000)), 1)
+
+    def test_an_image_that_will_not_resize_is_used_as_it_came(self):
+        adapter = BlueBubblesAdapter(base_url="x", password="y")
+
+        self.assertEqual(adapter._shrink(b"not really a png", "image/png"), b"not really a png")
+
     def test_a_message_without_pictures_keeps_its_plain_shape(self):
         class Responses:
             def __init__(self):

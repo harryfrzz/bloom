@@ -93,8 +93,17 @@ action and wait for explicit user approval through the approval gate."""
         text = str(error).lower()
         return "context" in text and ("exceed" in text or "too long" in text or "maximum" in text)
 
-    @staticmethod
-    def _fit(conversation: list[Message], budget: int) -> list[Message]:
+    # What a picture costs the context each turn, in characters of budget.
+    # Its bytes are uploaded once, but the model re-reads it every turn, and
+    # counting only the words beside it would hide that entirely.
+    IMAGE_WEIGHT = 4_000
+
+    @classmethod
+    def _weight(cls, message: Message) -> int:
+        return len(message.content) + cls.IMAGE_WEIGHT * len(message.images)
+
+    @classmethod
+    def _fit(cls, conversation: list[Message], budget: int) -> list[Message]:
         """Keep the newest turns that fit, oldest dropped first.
 
         A tool result means nothing without the call it answers, so a
@@ -103,7 +112,7 @@ action and wait for explicit user approval through the approval gate."""
         kept: list[Message] = []
         used = 0
         for message in reversed(conversation):
-            used += len(message.content)
+            used += cls._weight(message)
             if used > budget and kept:
                 break
             kept.append(message)

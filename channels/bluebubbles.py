@@ -7,6 +7,8 @@ import logging
 import os
 import sqlite3
 import ssl
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -207,10 +209,11 @@ class BlueBubblesAdapter:
     AUDIO_HINTS = ("audio", "caf", "m4a", "mpeg-4-audio", "amr", "wav", "opus", "ogg")
     # Pictures the model can actually read; HEIC is left out because it cannot.
     IMAGE_TYPES = ("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp")
-    # A handful at a time, and nothing enormous: every picture is re-sent with
-    # the conversation, and base64 makes it a third larger again.
-    IMAGE_LIMIT = 4
-    IMAGE_BYTES = 4_000_000
+    # A phone photo is far larger than a model needs in order to read it, and
+    # its size is paid again in tokens on every turn, so it is shrunk first.
+    IMAGE_EDGE = 1024
+    IMAGE_LIMIT = 6
+    IMAGE_BYTES = 12_000_000
 
     @classmethod
     def _is_audio(cls, attachment: Any) -> bool:
@@ -233,6 +236,36 @@ class BlueBubblesAdapter:
                 return mime
         return None
 
+    def _shrink(self, raw: bytes, mime: str) -> bytes:
+        """Scale a picture down to something a model can read cheaply.
+
+        Uses macOS's own sips rather than an image library, and keeps the
+        original whenever that does not work out.
+        """
+        suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}.get(mime, ".png")
+        try:
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+                handle.write(raw)
+                path = handle.name
+            subprocess.run(
+                ["sips", "-Z", str(self.IMAGE_EDGE), path],
+                check=True, capture_output=True, timeout=20,
+            )
+            with open(path, "rb") as handle:
+                smaller = handle.read()
+        except Exception as exc:
+            logger.warning("Could not resize an image, using it as it came: %s", exc)
+            return raw
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+        if not smaller:
+            return raw
+        logger.info("Resized an image from %d to %d bytes", len(raw), len(smaller))
+        return smaller if len(smaller) < len(raw) else raw
+
     def _pictures(self, data: dict[str, Any]) -> tuple[str, ...]:
         """Whatever was sent as a picture, ready to hand to the model."""
         found: list[str] = []
@@ -251,6 +284,7 @@ class BlueBubblesAdapter:
                 continue
             if not raw or len(raw) > self.IMAGE_BYTES:
                 continue
+            raw = self._shrink(raw, mime)
             found.append(f"data:{mime};base64,{base64.b64encode(raw).decode()}")
             if len(found) >= self.IMAGE_LIMIT:
                 break
