@@ -16,6 +16,7 @@ from memory.approvals import ApprovalStore
 from memory.identities import IdentityStore
 from proactive import DailyInterruptLimit
 from tasks.runner import LocalTaskRunner, TaskResult
+from tools.location import NetworkLocation
 
 
 # Words that mean a request belongs to a connected app rather than the browser.
@@ -46,6 +47,7 @@ class BloomApp:
         task_report: TaskReport | None = None,
         tool_factory: ToolFactory | None = None,
         browser_tasks: bool = False,
+        location: NetworkLocation | None = None,
     ) -> None:
         self.agent = agent
         self.db_path = Path(db_path)
@@ -67,6 +69,7 @@ class BloomApp:
         # until it earns its place back.  The machinery below stays ready.
         if browser_tasks:
             self._offer_browser_tasks()
+        self.agent.tools["current_location"] = (location or NetworkLocation.from_environment()).tool()
         self.agent.request_approval = self._request_approval
 
     def _offer_browser_tasks(self) -> None:
