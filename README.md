@@ -48,6 +48,11 @@ every time.
 And because it answers in the language you wrote in — Roman script in, Roman
 script out — it reads like a person rather than a product.
 
+The same is true of what it can reach. App integrations are not written into
+bloom; it asks Composio which ones are connected and offers those. Connecting a
+new app is an account-level action, not a pull request, so the assistant's reach
+grows without the code changing.
+
 The messaging channel is deliberately a seam. Everything above it — the agent, the
 tools, the memory, the watches — has no idea which app a message arrived from; a
 channel implements `send` and `run` against a normalised `InboundMessage`. Adding
@@ -67,9 +72,12 @@ the service is hosted, and only the channel bridge needs to sit near the user.
 * **Sees pictures.** Send a photo and ask about it. Images are shrunk, uploaded
   once, and referenced by id so a long conversation does not pay for them again
   each turn.
-* **Connected apps.** Gmail, Google Calendar, Notion and Slack through Composio's
-  tool router. An app you have not connected offers a sign-in link in the chat
-  instead of failing.
+* **Connected apps — whatever you connect.** Apps come through Composio's tool
+  router, which carries around a thousand of them: Gmail, Calendar, Notion,
+  Slack, GitHub, Linear, Drive, Sheets, HubSpot and so on. bloom hardcodes none
+  of them. It discovers whichever apps are set up and offers their actions, so
+  connecting a new one makes it usable without a code change. An app you have not
+  connected yet offers a sign-in link in the chat instead of failing.
 * **Apple Reminders, Notes and Calendar.** Tasks and notes are written directly on
   the Mac; events arrive as a calendar invite you tap to add, which needs no
   approval because the tap is the decision.
@@ -103,9 +111,10 @@ the service is hosted, and only the channel bridge needs to sit near the user.
   identities, watches and commitments. Pinecone (serverless, cosine, 1536
   dimensions) for the searchable memory.
 * **APIs / Services:** OpenAI Responses API (`gpt-5.6-luna`) and
-  `text-embedding-3-small`; Composio Tool Router for connected apps; Sarvam AI for
-  Indic speech-to-text and text-to-speech; BlueBubbles for iMessage; AppleScript
-  for Reminders, Notes and Calendar.
+  `text-embedding-3-small`; Composio Tool Router, which fronts roughly a thousand
+  app integrations and is queried dynamically rather than wired to a fixed list;
+  Sarvam AI for Indic speech-to-text and text-to-speech; BlueBubbles for iMessage;
+  AppleScript for Reminders, Notes and Calendar.
 * **Hosting / Deployment:** For the hackathon, entirely local: a `launchd` agent on
   one Mac, with SQLite on disk beside it. In production this pipeline is meant to
   be hosted — the agent, stores and schedulers as a service, with only the
