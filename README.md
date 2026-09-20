@@ -2,16 +2,23 @@
 
 ## Overview
 
-bloom is a personal assistant that lives inside iMessage. You text it the way you
-text a friend — in English, Hindi, Malayalam, or the romanised code-mix people
-actually type — and it answers in the same language you used. It reads your mail,
-watches for things you are waiting on, writes to your Reminders and Notes, sends
-calendar invites you tap to accept, listens to voice notes and replies out loud,
-looks at photos you send, remembers what you talked about weeks ago, and checks in
-when you said you would do something and did not.
+bloom is a personal assistant that knows your life and lives in the messaging app
+you already use. You text it the way you text a friend — in English, Hindi,
+Malayalam, or the romanised code-mix people actually type — and it answers in the
+same language you used. It reads your mail, watches for things you are waiting on,
+writes to your Reminders and Notes, sends calendar invites you tap to accept,
+listens to voice notes and replies out loud, looks at photos you send, remembers
+what you talked about weeks ago, and checks in when you said you would do
+something and did not.
 
-It runs as a daemon on your own Mac. There is no app to install and no website to
-log into: the interface is the message thread you already have open.
+The intended shape is one assistant reachable from wherever you happen to be
+writing — WhatsApp, iMessage, whatever comes next — backed by a hosted service
+that holds your context. **iMessage is the channel implemented so far**, through a
+local BlueBubbles server, and for this hackathon the whole pipeline runs on one
+Mac rather than in the cloud.
+
+There is no app to install and no website to log into: the interface is the
+message thread you already have open.
 
 ## Problem Statement
 
@@ -29,15 +36,24 @@ help, it is friction.
 
 ## Solution
 
-bloom moves the assistant into the message layer and keeps it on your own machine.
+bloom moves the assistant into the message layer, where the conversation already
+is, instead of asking you to come to it.
 
-Because it sits where your conversations already happen, it can see things no
-cloud assistant can: which of your threads have someone waiting on a reply, what
-you promised and to whom, what you have talked about before. Because it runs
-locally, that access stays on your laptop rather than being uploaded somewhere.
+Because it sits there, it can see things an assistant in a browser tab cannot:
+which of your threads have someone waiting on a reply, what you promised and to
+whom, what you have talked about before. That accumulated context is the product —
+an assistant that knows your life well enough to be useful without being briefed
+every time.
 
 And because it answers in the language you wrote in — Roman script in, Roman
 script out — it reads like a person rather than a product.
+
+The messaging channel is deliberately a seam. Everything above it — the agent, the
+tools, the memory, the watches — has no idea which app a message arrived from; a
+channel implements `send` and `run` against a normalised `InboundMessage`. Adding
+WhatsApp means writing another adapter beside `channels/bluebubbles.py`, not
+reworking the assistant. In production that seam is also where the split happens:
+the service is hosted, and only the channel bridge needs to sit near the user.
 
 ## Features
 
@@ -90,8 +106,12 @@ script out — it reads like a person rather than a product.
   `text-embedding-3-small`; Composio Tool Router for connected apps; Sarvam AI for
   Indic speech-to-text and text-to-speech; BlueBubbles for iMessage; AppleScript
   for Reminders, Notes and Calendar.
-* **Hosting / Deployment:** None. It runs as a `launchd` agent on the user's own
-  Mac, which is the point rather than a limitation.
+* **Hosting / Deployment:** For the hackathon, entirely local: a `launchd` agent on
+  one Mac, with SQLite on disk beside it. In production this pipeline is meant to
+  be hosted — the agent, stores and schedulers as a service, with only the
+  messaging bridge near the user. Nothing in the design assumes the laptop; it
+  assumes one process with a database, which is why the move is a deployment
+  change rather than a rewrite.
 * **Other Tools:** `sips` for image resizing, `.ics` generation for calendar
   invites, `unittest` for the test suite.
 
@@ -168,12 +188,15 @@ hard distinction; Tamil, Telugu, Kannada and Bengali are reliably declined.
 Reminders and Notes are written through AppleScript rather than sent as files,
 because no file format reaches them reliably on Apple's side.
 
-**What is honest about the architecture.** bloom is local-first, but not local-only.
-Model calls, connected apps and the vector memory are remote by necessity. The
-conversation database, message access, approvals and every decision about what to
-do stay on the laptop. Recall was the first feature to send conversations off the
-machine, and it is optional for that reason — the same design runs against a local
-vector store.
+**Local is the hackathon, not the thesis.** Everything runs on one Mac here because
+that was the fastest way to a working assistant in the time available, and because
+iMessage access genuinely requires a Mac. The intended production shape is hosted:
+the agent, the stores and the schedulers as a service, with the messaging bridge as
+the only piece that must sit near the user. Some of that is already true — model
+calls, connected apps and the vector memory are remote today — and the rest is a
+deployment change rather than a redesign. The one piece that cannot move is the
+iMessage bridge, which is a reason WhatsApp matters: it is the first channel that
+would let the whole thing live in the cloud.
 
 **Known rough edges.** BlueBubbles' own message listener stalls and only recovers on
 a restart, so bloom polls its REST API alongside the webhook and deduplicates by
@@ -189,7 +212,13 @@ research, education and nonprofits. Commercial use requires a separate licence
 from the author. Note that this is a source-available licence rather than an
 OSI-approved open source one, precisely because it restricts commercial use.
 
-**What is next.** Group chats — an assistant that lives in a friend group rather
-than a one-to-one thread. Reading an event poster from a photo straight into a
-calendar invite. Drafting the replies for the people found waiting, rather than
-only listing them.
+**What is next.** WhatsApp as a second channel, which is both the most requested
+surface and the one that frees the service from needing a Mac at all. Then group
+chats — an assistant that lives in a friend group rather than a one-to-one thread.
+Reading an event poster from a photo straight into a calendar invite. Drafting the
+replies for the people found waiting, rather than only listing them.
+
+A caveat on the channel seam, since it is easy to overclaim: `send` and `run` are
+all a channel must implement, but iMessage-specific work sits outside that protocol
+too — attachments, contact lookup, reading who is waiting on a reply. A WhatsApp
+adapter would reach parity in stages rather than in one file.
