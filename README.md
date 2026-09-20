@@ -158,9 +158,22 @@ _To be added._
 
 ## Screenshots
 
-_To be added: the conversation thread showing a voice note answered in Manglish, a
-calendar invite arriving as a tappable `.ics`, and a watch firing with a written-up
-summary._
+![bloom answering in Manglish across weather, mail, calendar and a screenshot](docs/demo.png)
+
+Four moments from one morning, left to right:
+
+1. **It answers in the language you wrote in.** Manglish in, Manglish out — and it
+   works out roughly where you are before answering a question about the weather,
+   while saying plainly that the location is approximate.
+2. **It reads your mail.** Asked which upcoming hackathons are in the inbox, it
+   finds the Codex Community Hackathon, and says clearly that there were no others
+   rather than padding the answer.
+3. **It listens.** The blue bubble is a voice note; bloom transcribes it and
+   answers with the week's calendar — including noticing that one session appears
+   in two calendars and is probably a single event, not two.
+4. **It looks at what you send.** A screenshot of an email, summarised into what
+   actually matters: you have been shortlisted, here is what the panel expects,
+   and a prototype is not required yet.
 
 ## How to Run Locally
 
