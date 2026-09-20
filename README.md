@@ -111,7 +111,8 @@ the service is hosted, and only the channel bridge needs to sit near the user.
   identities, watches and commitments. Pinecone (serverless, cosine, 1536
   dimensions) for the searchable memory.
 * **APIs / Services:** OpenAI Responses API (`gpt-5.6-luna`) and
-  `text-embedding-3-small`; Composio Tool Router, which fronts roughly a thousand
+  `text-embedding-3-small`, plus the OpenAI Agents SDK for background task work;
+  Composio Tool Router, which fronts roughly a thousand
   app integrations and is queried dynamically rather than wired to a fixed list;
   Sarvam AI for Indic speech-to-text and text-to-speech; BlueBubbles for iMessage;
   AppleScript for Reminders, Notes and Calendar.
@@ -136,6 +137,17 @@ The model was also chosen by measurement rather than reputation. Five candidates
 were benchmarked on this project's actual prompts, and `gpt-5.6-luna` won on both
 accuracy and cost — 9/9 on the language matrix at 440 output tokens against
 `gpt-5.4-mini`'s 8/9 at 967, for the same latency.
+
+**The OpenAI Agents SDK** (`openai-agents`) backs the second layer: longer work
+that does not fit in a single reply. `tasks/runner.py` builds an `Agent` with a
+`function_tool` for local browser research and an SDK `SQLiteSession` holding that
+task's state on disk, run on a long-lived event loop so a background task never
+blocks the conversation. It is switched off by default behind
+`BLOOM_BROWSER_TASKS`: the browser it drives is signed into nothing, and the model
+kept reaching for it over the connected apps — answering "did I get mail from X"
+by opening Gmail in a browser and hitting a login wall. The machinery is intact
+and one environment variable away; what it needs is a browser with a real session,
+which is the next thing to build rather than something to leave on.
 
 AI assistance was used throughout the build itself: designing the architecture,
 writing the code and its 125 tests, and — most usefully — debugging. A long list of
