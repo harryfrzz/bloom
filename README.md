@@ -154,7 +154,8 @@ connected. Running it means running it yourself, which the section below covers.
 
 ### Demo / Pitch Video
 
-_To be added._
+**[Watch the demo](https://youtube.com/shorts/UcOjsgrdoBM?feature=share)** —
+bloom answering over iMessage, in the language it was written to.
 
 ## Screenshots
 
